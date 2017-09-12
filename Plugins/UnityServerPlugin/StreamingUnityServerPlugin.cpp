@@ -20,6 +20,7 @@
 #include "server_main_window.h"
 #include "flagdefs.h"
 #include "peer_connection_client.h"
+#include "config_parser.h"
 #include "webrtc/modules/video_coding/codecs/h264/h264_encoder_impl.h"
 #include "webrtc/base/checks.h"
 #include "webrtc/base/ssladapter.h"
@@ -71,7 +72,7 @@ static rtc::scoped_refptr<Conductor> s_conductor = nullptr;
 
 static BufferRenderer*		s_bufferRenderer = nullptr;
 static ID3D11Texture2D*		s_frameBuffer = nullptr;
-
+static WebRTCConfig			s_webrtcConfig;
 
 ServerMainWindow *wnd;
 std::thread *messageThread;
@@ -86,6 +87,9 @@ void InitWebRTC()
 {
 	ULOG(INFO, __FUNCTION__);
 
+	// Loads webrtc config file.
+	ConfigParser::Parse("webrtcConfig.json", &s_webrtcConfig);
+
 	rtc::EnsureWinsockInit();
 	rtc::Win32Thread w32_thread;
 	rtc::ThreadManager::Instance()->SetCurrentThread(&w32_thread);
@@ -93,44 +97,26 @@ void InitWebRTC()
 
 	PeerConnectionClient client;
 
-	wnd = new ServerMainWindow(FLAG_server, FLAG_port, FLAG_autoconnect, FLAG_autocall,
-		true, 1280, 720);
+	wnd = new ServerMainWindow(
+		FLAG_server,
+		FLAG_port,
+		FLAG_autoconnect,
+		FLAG_autocall,
+		true,
+		1280,
+		720);
 
 	wnd->Create();
 
-	// Try parsing config file.
-	std::string configFilePath = webrtc::ExePath("webrtcConfig.json");
-	std::ifstream webrtcConfigFile(configFilePath);
-	Json::Reader reader;
-	Json::Value root = NULL;
-	char server[1024];
-	//int port = 443;
-	int heartbeat = 5000;
+	s_server = s_webrtcConfig.server;
+	s_port = s_webrtcConfig.port;
+	client.SetHeartbeatMs(s_webrtcConfig.heartbeat);
 
-	if (webrtcConfigFile.good())
-	{
-		reader.parse(webrtcConfigFile, root, true);
-		if (root.isMember("server"))
-		{
-			strcpy(server, root.get("server", FLAG_server).asCString());
-
-			s_server = server;
-		}
-
-		if (root.isMember("port"))
-		{
-			s_port = root.get("port", FLAG_port).asInt();
-		}
-
-		if (root.isMember("heartbeat"))
-		{
-			heartbeat = root.get("heartbeat", FLAG_heartbeat).asInt();
-		}
-	}
-
-	client.SetHeartbeatMs(heartbeat);
-
-	s_conductor = new rtc::RefCountedObject<Conductor>(&client, wnd, s_bufferRenderer);
+	s_conductor = new rtc::RefCountedObject<Conductor>(
+		&client,
+		wnd,
+		&s_webrtcConfig,
+		s_bufferRenderer);
 	
 	// Handles input from client.
 	InputDataHandler inputHandler([&](const std::string& message)
